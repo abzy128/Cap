@@ -839,6 +839,8 @@ pub struct GeneralSettings {
     /// `!!settings.outOfProcessMuxer` in experimental.tsx).
     pub enable_native_camera_preview: bool,
     pub out_of_process_muxer: bool,
+    pub keep_main_window_hidden: bool,
+    pub copy_screenshot_without_editor: bool,
     /// Not part of `general_settings` at all: the mic-confirmation toggle
     /// lives in the store's own `recording_start_safety` section
     /// (`RECORDING_START_SAFETY_DEFAULTS`), and the page renders it in the
@@ -1170,6 +1172,8 @@ impl GeneralSettings {
             editor_preview_quality: enum_at(general, "editorPreviewQuality"),
             enable_native_camera_preview: bool_at(general, "enableNativeCameraPreview", false),
             out_of_process_muxer: bool_at(general, "outOfProcessMuxer", false),
+            keep_main_window_hidden: bool_at(general, "keepMainWindowHidden", false),
+            copy_screenshot_without_editor: bool_at(general, "copyScreenshotWithoutEditor", false),
             confirm_without_microphone: bool_at(
                 safety,
                 "confirmBeforeRecordingWithoutMicrophone",
@@ -2545,5 +2549,19 @@ mod tests {
         general.insert("excludedWindows".to_string(), Value::Array(Vec::new()));
         let cleared = GeneralSettings::from_sections(&general, &Map::new(), &Map::new());
         assert!(cleared.excluded_windows.is_empty());
+    }
+
+    #[test]
+    fn screenshot_window_settings_stay_off_unless_enabled() {
+        let absent = GeneralSettings::from_sections(&Map::new(), &Map::new(), &Map::new());
+        assert!(!absent.keep_main_window_hidden);
+        assert!(!absent.copy_screenshot_without_editor);
+
+        let mut general = Map::new();
+        general.insert("keepMainWindowHidden".to_string(), Value::Bool(true));
+        general.insert("copyScreenshotWithoutEditor".to_string(), Value::Bool(true));
+        let enabled = GeneralSettings::from_sections(&general, &Map::new(), &Map::new());
+        assert!(enabled.keep_main_window_hidden);
+        assert!(enabled.copy_screenshot_without_editor);
     }
 }

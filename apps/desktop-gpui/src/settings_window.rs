@@ -2962,6 +2962,7 @@ impl SettingsWindow {
             self.render_appearance(cx).into_any_element(),
             self.render_app_section(cx).into_any_element(),
             self.render_recording(cx).into_any_element(),
+            self.render_screenshot_behaviour(cx).into_any_element(),
             self.render_storage(cx).into_any_element(),
             self.render_project_name(window, cx).into_any_element(),
             self.render_excluded_windows(cx).into_any_element(),
@@ -3624,6 +3625,60 @@ impl SettingsWindow {
                         }),
                         self.select("max-fps", fps_label, MenuKind::MaxFps, cx)
                             .into_any_element(),
+                    ),
+                ])
+                .into_any_element(),
+            ],
+        )
+    }
+
+    fn render_screenshot_behaviour(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = &self.settings;
+        self.section(
+            "Screenshots",
+            Some("What happens after you take a screenshot."),
+            None,
+            vec![
+                self.rows(vec![
+                    self.setting_row(
+                        "Keep the main window hidden",
+                        Some(
+                            "Leave the main window hidden after you close the screenshot or \
+                             recording editor, and after taking a screenshot. Open it again from \
+                             the menu bar with Open Main Window.",
+                        ),
+                        self.toggle(
+                            "keep-main-window-hidden",
+                            settings.keep_main_window_hidden,
+                            cx,
+                            |this, cx| {
+                                this.settings.keep_main_window_hidden =
+                                    !this.settings.keep_main_window_hidden;
+                                let value = this.settings.keep_main_window_hidden;
+                                this.write_bool("keepMainWindowHidden", value, cx);
+                            },
+                        )
+                        .into_any_element(),
+                    ),
+                    self.setting_row(
+                        "Copy screenshots without opening the editor",
+                        Some(
+                            "Save the screenshot and copy it to the clipboard instead of opening \
+                             the editor. You can still open it later from the menu bar or the \
+                             Screenshots library.",
+                        ),
+                        self.toggle(
+                            "copy-screenshot-without-editor",
+                            settings.copy_screenshot_without_editor,
+                            cx,
+                            |this, cx| {
+                                this.settings.copy_screenshot_without_editor =
+                                    !this.settings.copy_screenshot_without_editor;
+                                let value = this.settings.copy_screenshot_without_editor;
+                                this.write_bool("copyScreenshotWithoutEditor", value, cx);
+                            },
+                        )
+                        .into_any_element(),
                     ),
                 ])
                 .into_any_element(),

@@ -5793,9 +5793,15 @@ async fn drive_auto_playback(
 /// as the frontmost surface (AppKit hands it key status as the editor goes
 /// away) rather than revealing main over it. The idle gate is this port's
 /// own: during a recording the main window is deliberately hidden and the
-/// session observer restores it when the recording ends.
-fn reveal_main_after_editor_close(editors_left: usize, settings_open: bool, idle: bool) -> bool {
-    editors_left == 0 && !settings_open && idle
+/// session observer restores it when the recording ends. `keepMainWindowHidden`
+/// leaves it hidden entirely; the tray's Open Main Window still brings it back.
+fn reveal_main_after_editor_close(
+    editors_left: usize,
+    settings_open: bool,
+    idle: bool,
+    keep_main_hidden: bool,
+) -> bool {
+    editors_left == 0 && !settings_open && idle && !keep_main_hidden
 }
 
 /// An editor window is going away. `CapWindowId::Editor`'s `Destroyed` arm
@@ -5905,7 +5911,8 @@ fn restore_after_editor_close(key: &Path, cx: &mut App) {
     );
     let session = session.read(cx);
     let capture_safe = session.phase == Phase::Idle || session.capture_stopped_for_editor();
-    if reveal_main_after_editor_close(editors_left, settings_open, capture_safe) {
+    let keep_main_hidden = crate::store::GeneralSettings::load().keep_main_window_hidden;
+    if reveal_main_after_editor_close(editors_left, settings_open, capture_safe, keep_main_hidden) {
         show_main_window(cx);
     } else {
         // A dock-activating window closed; the policy has to be recomputed
@@ -6461,8 +6468,10 @@ pub fn prepare_for_screenshot_capture(cx: &mut App) -> bool {
 /// A screenshot finished (`Some` PNG path) or failed (`None`): refresh every
 /// surface that lists screenshots -- the `NewScreenshotAdded` listeners in
 /// the Tauri app -- and open the screenshot editor on the new bundle, the
-/// `automationShouldOpenScreenshotEditor` default. A failure reveals the main
-/// window if the picker had hidden it, since nothing else will.
+/// `automationShouldOpenScreenshotEditor` default. With
+/// `copyScreenshotWithoutEditor` the image goes to the clipboard instead, and
+/// the editor opens only if that copy fails. A failure reveals the main window
+/// if the picker had hidden it, since nothing else will.
 pub fn screenshot_finished(captured: Option<PathBuf>, cx: &mut App) {
     let Some(png) = captured else {
         let hidden = std::mem::take(&mut cx.global_mut::<AppWindows>().main_hidden_for_picker);
@@ -6482,11 +6491,40 @@ pub fn screenshot_finished(captured: Option<PathBuf>, cx: &mut App) {
     main.update(cx, |view, window, cx| view.refresh_open_library(window, cx))
         .ok();
 
+    let settings = crate::store::GeneralSettings::load();
+    if settings.copy_screenshot_without_editor {
+        match platform::copy_image_to_clipboard(&png, cx) {
+            Ok(()) => {
+                let hidden =
+                    std::mem::take(&mut cx.global_mut::<AppWindows>().main_hidden_for_picker);
+                let idle = RecordingSession::global(cx).read(cx).phase == Phase::Idle;
+                if reveal_main_after_screenshot_copy(hidden, idle, settings.keep_main_window_hidden)
+                {
+                    show_main_window(cx);
+                } else {
+                    crate::menus::schedule_dock_sync(cx);
+                }
+                return;
+            }
+            Err(error) => {
+                tracing::warn!("copying the new screenshot failed; opening the editor: {error}");
+            }
+        }
+    }
+
     // The editor owns the foreground now, the way a stopped studio recording
     // hands off to the video editor; `screenshot_editor_closed` brings the
     // main window back.
     cx.global_mut::<AppWindows>().main_hidden_for_picker = false;
     open_screenshot_editor(png, cx);
+}
+
+fn reveal_main_after_screenshot_copy(
+    hidden_for_picker: bool,
+    idle: bool,
+    keep_main_hidden: bool,
+) -> bool {
+    hidden_for_picker && idle && !keep_main_hidden
 }
 
 /// Open (or focus) the screenshot editor for a bundle -- the
@@ -6657,7 +6695,8 @@ pub fn screenshot_editor_closed(bundle: &Path, cx: &mut App) {
         "screenshot editor window closed"
     );
     let idle = RecordingSession::global(cx).read(cx).phase == Phase::Idle;
-    if reveal_main_after_editor_close(editors_left, settings_open, idle) {
+    let keep_main_hidden = crate::store::GeneralSettings::load().keep_main_window_hidden;
+    if reveal_main_after_editor_close(editors_left, settings_open, idle, keep_main_hidden) {
         show_main_window(cx);
     } else {
         crate::menus::schedule_dock_sync(cx);
@@ -7571,14 +7610,27 @@ mod tests {
     #[test]
     fn main_window_never_returns_over_an_open_settings_window() {
         // The reported flow: last editor closes while Settings is open.
-        assert!(!reveal_main_after_editor_close(0, true, true));
+        assert!(!reveal_main_after_editor_close(0, true, true, false));
         // No Settings: the last editor closing reveals main.
-        assert!(reveal_main_after_editor_close(0, false, true));
+        assert!(reveal_main_after_editor_close(0, false, true, false));
         // Other editors still open keep main hidden either way.
-        assert!(!reveal_main_after_editor_close(1, false, true));
-        assert!(!reveal_main_after_editor_close(1, true, true));
+        assert!(!reveal_main_after_editor_close(1, false, true, false));
+        assert!(!reveal_main_after_editor_close(1, true, true, false));
         // Mid-recording the session observer owns the reveal, not this path.
-        assert!(!reveal_main_after_editor_close(0, false, false));
+        assert!(!reveal_main_after_editor_close(0, false, false, false));
+    }
+
+    #[test]
+    fn keep_main_window_hidden_suppresses_the_editor_close_reveal() {
+        assert!(!reveal_main_after_editor_close(0, false, true, true));
+    }
+
+    #[test]
+    fn screenshot_copy_reveals_main_only_when_the_picker_hid_it() {
+        assert!(reveal_main_after_screenshot_copy(true, true, false));
+        assert!(!reveal_main_after_screenshot_copy(false, true, false));
+        assert!(!reveal_main_after_screenshot_copy(true, false, false));
+        assert!(!reveal_main_after_screenshot_copy(true, true, true));
     }
 
     #[test]
